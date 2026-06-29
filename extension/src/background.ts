@@ -82,8 +82,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const token = await getAuthToken();
         sendResponse({ ok: true, authenticated: !!token });
 
-      } else if (msg.type === 'WF_STATUS') {
-        // Content script broadcasting a status update (start, done, stop, error)
+      } else if (msg.type === 'WF_STATUS' || msg.type === 'WF_STEP_DONE') {
+        // Relay any status/step update from content to panel
         broadcastToPanel(msg);
         sendResponse({ ok: true });
 

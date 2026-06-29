@@ -45,7 +45,7 @@ async function captureAndGuide() {
     return;
   }
 
-  const { selector, action, explanation, value, done, confidence, fallbackCoordinates, latencyMs } =
+  const { selector, action, explanation, value, done, confidence, fallbackCoordinates } =
     response.data;
 
   if (done) {
@@ -56,11 +56,7 @@ async function captureAndGuide() {
     return;
   }
 
-  sendStatus('guiding', explanation, {
-    action,
-    latencyMs,
-    stepIndex: state.completedSteps.length + 1,
-  });
+  // 'guiding' status is sent by background (it has latencyMs); content just drives the overlay
 
   injectOverlay({
     selector,
@@ -71,7 +67,7 @@ async function captureAndGuide() {
     fallbackCoordinates,
     onAdvance: (stepDescription: string) => {
       state.completedSteps.push(stepDescription);
-      sendStatus('thinking', 'Moving to next step…', { stepIndex: state.completedSteps.length + 1 });
+      sendStatus('step-done', stepDescription, { stepIndex: state.completedSteps.length });
       removeOverlay();
       waitForSettle(800).then(captureAndGuide);
     },

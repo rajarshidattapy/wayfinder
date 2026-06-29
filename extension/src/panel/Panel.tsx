@@ -1,41 +1,28 @@
 import { useState, useEffect, useRef } from 'react';
 
-type Status = 'idle' | 'thinking' | 'guiding' | 'done' | 'error';
-
-interface StatusMsg {
-  status: Status;
-  message?: string;
-  action?: string;
-  latencyMs?: number;
-  stepIndex?: number;
-  goal?: string;
-}
+type StepStatus = 'thinking' | 'active' | 'done';
 
 interface Step {
   index: number;
   message: string;
+  status: StepStatus;
   latencyMs?: number;
+  action?: string;
 }
 
-const STATUS_CONFIG: Record<Status, { label: string; color: string; pulse: boolean }> = {
-  idle:     { label: 'Ready',    color: 'bg-slate-400',  pulse: false },
-  thinking: { label: 'Thinking', color: 'bg-amber-400',  pulse: true  },
-  guiding:  { label: 'Guiding',  color: 'bg-green-500',  pulse: true  },
-  done:     { label: 'Done',     color: 'bg-green-500',  pulse: false },
-  error:    { label: 'Error',    color: 'bg-red-500',    pulse: false },
-};
+type RunStatus = 'idle' | 'thinking' | 'guiding' | 'done' | 'error';
+
+const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:3000';
 
 export default function Panel() {
-  const [authed, setAuthed] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [goal, setGoal] = useState('');
-  const [running, setRunning] = useState(false);
-  const [status, setStatus] = useState<Status>('idle');
-  const [currentMsg, setCurrentMsg] = useState('');
-  const [stepIndex, setStepIndex] = useState(0);
-  const [latencyMs, setLatencyMs] = useState<number | null>(null);
-  const [completedSteps, setCompletedSteps] = useState<Step[]>([]);
-  const stepsEndRef = useRef<HTMLDivElement>(null);
+  const [authed, setAuthed]     = useState(false);
+  const [loading, setLoading]   = useState(true);
+  const [goal, setGoal]         = useState('');
+  const [running, setRunning]   = useState(false);
+  const [runStatus, setRunStatus] = useState<RunStatus>('idle');
+  const [errorMsg, setErrorMsg] = useState('');
+  const [steps, setSteps]       = useState<Step[]>([]);
+  const bottomRef = useRef<HTMLDivElement>(null);
 
   // Auth check
   useEffect(() => {
@@ -45,49 +32,107 @@ export default function Panel() {
     });
   }, []);
 
-  // Connect to background via persistent port for real-time status
+  // Real-time updates via persistent port
   useEffect(() => {
     const port = chrome.runtime.connect({ name: 'wf-panel' });
-    port.onMessage.addListener((msg: StatusMsg & { type: string }) => {
-      if (msg.type !== 'WF_STATUS') return;
 
-      setStatus(msg.status);
-      if (msg.message) setCurrentMsg(msg.message);
-      if (msg.stepIndex) setStepIndex(msg.stepIndex);
-      if (msg.latencyMs) setLatencyMs(msg.latencyMs);
-      if (msg.goal) setGoal(msg.goal);
+    port.onMessage.addListener((msg: Record<string, unknown>) => {
+      const status = msg.status as string;
+      const stepIndex = (msg.stepIndex as number) ?? 0;
+      const message = (msg.message as string) ?? '';
+      const latencyMs = msg.latencyMs as number | undefined;
+      const action = msg.action as string | undefined;
 
-      if (msg.status === 'guiding' && msg.message) {
-        setCompletedSteps((prev) => [
-          ...prev,
-          { index: msg.stepIndex ?? prev.length + 1, message: msg.message!, latencyMs: msg.latencyMs },
-        ]);
-      }
-      if (msg.status === 'done' || msg.status === 'idle') {
-        setRunning(false);
-      }
-      if (msg.status === 'error') {
-        setRunning(false);
+      if (msg.type === 'WF_STATUS') {
+        if (status === 'thinking') {
+          setRunStatus('thinking');
+          // Add a new "thinking" placeholder for this step
+          setSteps((prev) => {
+            // If there's already a thinking step, don't duplicate
+            const last = prev[prev.length - 1];
+            if (last?.status === 'thinking') return prev;
+            return [...prev, { index: stepIndex, message: 'Analyzing page…', status: 'thinking' }];
+          });
+        }
+
+        if (status === 'guiding') {
+          setRunStatus('guiding');
+          // Replace the thinking placeholder with the real instruction
+          setSteps((prev) => {
+            const updated = [...prev];
+            const thinkingIdx = updated.findLastIndex((s) => s.status === 'thinking');
+            if (thinkingIdx !== -1) {
+              updated[thinkingIdx] = {
+                index: stepIndex,
+                message,
+                status: 'active',
+                latencyMs,
+                action,
+              };
+            } else {
+              updated.push({ index: stepIndex, message, status: 'active', latencyMs, action });
+            }
+            return updated;
+          });
+        }
+
+        if (status === 'step-done') {
+          // Mark the active step as done
+          setSteps((prev) => {
+            const updated = [...prev];
+            const activeIdx = updated.findLastIndex((s) => s.status === 'active');
+            if (activeIdx !== -1) updated[activeIdx] = { ...updated[activeIdx], status: 'done' };
+            return updated;
+          });
+        }
+
+        if (status === 'done') {
+          setRunStatus('done');
+          setRunning(false);
+          // Mark last active step done
+          setSteps((prev) => {
+            const updated = [...prev];
+            const activeIdx = updated.findLastIndex((s) => s.status === 'active' || s.status === 'thinking');
+            if (activeIdx !== -1) updated[activeIdx] = { ...updated[activeIdx], status: 'done' };
+            return updated;
+          });
+        }
+
+        if (status === 'idle') {
+          setRunStatus('idle');
+          setRunning(false);
+        }
+
+        if (status === 'error') {
+          setRunStatus('error');
+          setErrorMsg(message);
+          setRunning(false);
+          setSteps((prev) => {
+            const updated = [...prev];
+            const idx = updated.findLastIndex((s) => s.status === 'thinking' || s.status === 'active');
+            if (idx !== -1) updated.splice(idx, 1); // remove stuck step
+            return updated;
+          });
+        }
       }
     });
+
     return () => port.disconnect();
   }, []);
 
-  // Auto-scroll steps list
+  // Auto-scroll as steps appear
   useEffect(() => {
-    stepsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [completedSteps]);
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [steps]);
 
   const start = async () => {
     if (!goal.trim()) return;
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) return;
     setRunning(true);
-    setStatus('thinking');
-    setCurrentMsg('Starting…');
-    setCompletedSteps([]);
-    setStepIndex(1);
-    setLatencyMs(null);
+    setRunStatus('thinking');
+    setSteps([]);
+    setErrorMsg('');
     chrome.tabs.sendMessage(tab.id, { type: 'WF_START', goal });
   };
 
@@ -96,27 +141,26 @@ export default function Panel() {
     if (!tab?.id) return;
     chrome.tabs.sendMessage(tab.id, { type: 'WF_STOP' });
     setRunning(false);
-    setStatus('idle');
-    setCurrentMsg('');
+    setRunStatus('idle');
+    // Mark any in-progress step as abandoned
+    setSteps((prev) => prev.map((s) =>
+      s.status === 'thinking' || s.status === 'active' ? { ...s, status: 'done' } : s
+    ));
   };
 
-  const cfg = STATUS_CONFIG[status];
-
   if (loading) return (
-    <div className="flex items-center justify-center h-screen text-slate-400 text-sm">
-      Loading…
-    </div>
+    <div className="flex items-center justify-center h-screen text-slate-400 text-sm">Loading…</div>
   );
 
   if (!authed) return (
-    <div className="p-6 flex flex-col gap-4">
+    <div className="p-5 flex flex-col gap-4">
       <div className="flex items-center gap-2">
-        <span className="text-2xl">🧭</span>
-        <span className="font-bold text-lg text-slate-900">Wayfinder</span>
+        <span className="text-xl">🧭</span>
+        <span className="font-bold text-slate-900">Wayfinder</span>
       </div>
       <p className="text-sm text-slate-500">Sign in to start guided navigation.</p>
       <a
-        href={`${import.meta.env.VITE_API_BASE ?? 'http://localhost:3000'}/extension/auth`}
+        href={`${API_BASE}/extension/auth`}
         target="_blank"
         rel="noreferrer"
         className="block w-full text-center bg-green-600 hover:bg-green-700 text-white py-2.5 rounded-lg font-medium text-sm transition-colors"
@@ -126,127 +170,150 @@ export default function Panel() {
     </div>
   );
 
-  return (
-    <div className="flex flex-col h-screen bg-white text-slate-900 text-sm">
+  const doneCount = steps.filter((s) => s.status === 'done').length;
 
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
+  return (
+    <div className="flex flex-col h-screen bg-white text-sm text-slate-900">
+
+      {/* ── Header ── */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 shrink-0">
         <div className="flex items-center gap-2">
-          <span className="text-lg">🧭</span>
-          <span className="font-bold text-slate-900">Wayfinder</span>
+          <span className="text-base">🧭</span>
+          <span className="font-bold">Wayfinder</span>
         </div>
-        {/* Live status pill */}
-        <div className="flex items-center gap-1.5">
-          <span className={`w-2 h-2 rounded-full ${cfg.color} ${cfg.pulse ? 'animate-pulse' : ''}`} />
-          <span className="text-xs font-medium text-slate-500">{cfg.label}</span>
-        </div>
+        <StatusPill status={runStatus} />
       </div>
 
-      {/* Status bar — visible while running */}
-      {running && (
-        <div className={`px-4 py-3 border-b border-slate-100 ${
-          status === 'thinking' ? 'bg-amber-50' :
-          status === 'guiding'  ? 'bg-green-50' :
-          status === 'error'    ? 'bg-red-50' : 'bg-slate-50'
-        }`}>
-          <div className="flex items-start gap-2">
-            <span className={`w-2 h-2 mt-1.5 rounded-full shrink-0 ${cfg.color} ${cfg.pulse ? 'animate-pulse' : ''}`} />
-            <div className="flex-1 min-w-0">
-              <p className="font-medium leading-snug text-slate-800">{currentMsg || '…'}</p>
-              <div className="flex items-center gap-3 mt-1 text-xs text-slate-400">
-                <span>Step {stepIndex}</span>
-                {latencyMs && <span>{latencyMs}ms</span>}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Done banner */}
-      {status === 'done' && (
-        <div className="mx-4 mt-4 bg-green-50 border border-green-200 rounded-xl p-4 text-center">
-          <p className="text-2xl mb-1">🎉</p>
-          <p className="font-semibold text-green-800">Goal complete!</p>
-        </div>
-      )}
-
-      {/* Error banner */}
-      {status === 'error' && (
-        <div className="mx-4 mt-4 bg-red-50 border border-red-200 rounded-xl p-4">
-          <p className="font-semibold text-red-700 mb-1">Something went wrong</p>
-          <p className="text-xs text-red-500">{currentMsg}</p>
-        </div>
-      )}
-
-      {/* Goal input */}
-      <div className="px-4 pt-4">
+      {/* ── Goal input ── */}
+      <div className="px-4 pt-3 pb-2 shrink-0 border-b border-slate-100">
         <textarea
           value={goal}
           onChange={(e) => setGoal(e.target.value)}
           placeholder="Deploy my FastAPI app on AWS…"
           disabled={running}
-          rows={3}
-          className="w-full p-3 border border-slate-200 rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-50 disabled:bg-slate-50"
+          rows={2}
+          className="w-full p-2.5 border border-slate-200 rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-50 disabled:bg-slate-50"
           onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) start(); }}
         />
+        <div className="mt-2">
+          {running ? (
+            <button onClick={stop} className="w-full bg-red-500 hover:bg-red-600 text-white py-2 rounded-lg font-medium text-sm transition-colors">
+              Stop
+            </button>
+          ) : (
+            <button onClick={start} disabled={!goal.trim()} className="w-full bg-green-600 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed text-white py-2 rounded-lg font-medium text-sm transition-colors">
+              Start guiding me →
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Action button */}
-      <div className="px-4 pt-2">
-        {running ? (
-          <button
-            onClick={stop}
-            className="w-full bg-red-500 hover:bg-red-600 text-white py-2.5 rounded-lg font-medium text-sm transition-colors"
-          >
-            Stop guidance
-          </button>
-        ) : (
-          <button
-            onClick={start}
-            disabled={!goal.trim()}
-            className="w-full bg-green-600 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed text-white py-2.5 rounded-lg font-medium text-sm transition-colors"
-          >
-            Start guiding me →
-          </button>
+      {/* ── Steps log ── */}
+      <div className="flex-1 overflow-y-auto px-4 py-3">
+
+        {/* Done banner */}
+        {runStatus === 'done' && (
+          <div className="mb-4 bg-green-50 border border-green-200 rounded-xl p-4 text-center">
+            <p className="text-xl mb-0.5">🎉</p>
+            <p className="font-semibold text-green-800 text-sm">Goal complete!</p>
+            <p className="text-xs text-green-600 mt-0.5">{doneCount} steps</p>
+          </div>
+        )}
+
+        {/* Error banner */}
+        {runStatus === 'error' && (
+          <div className="mb-4 bg-red-50 border border-red-200 rounded-xl p-3">
+            <p className="font-semibold text-red-700 text-xs mb-0.5">Something went wrong</p>
+            <p className="text-xs text-red-500 break-words">{errorMsg}</p>
+          </div>
+        )}
+
+        {/* Step list */}
+        {steps.length === 0 && !running && (
+          <p className="text-slate-400 text-xs text-center pt-6">
+            Steps will appear here as Wayfinder guides you.
+          </p>
+        )}
+
+        <div className="space-y-2">
+          {steps.map((step, i) => (
+            <StepRow key={i} step={step} />
+          ))}
+        </div>
+
+        <div ref={bottomRef} />
+      </div>
+    </div>
+  );
+}
+
+function StepRow({ step }: { step: Step }) {
+  return (
+    <div className={`flex items-start gap-2.5 rounded-lg px-2 py-2 transition-colors ${
+      step.status === 'active'   ? 'bg-green-50 border border-green-200' :
+      step.status === 'thinking' ? 'bg-amber-50 border border-amber-200' :
+      'bg-slate-50 border border-transparent'
+    }`}>
+      {/* Icon */}
+      <div className="mt-0.5 shrink-0">
+        {step.status === 'done' && (
+          <span className="w-5 h-5 rounded-full bg-green-100 text-green-700 text-xs flex items-center justify-center font-bold">✓</span>
+        )}
+        {step.status === 'active' && (
+          <span className="w-5 h-5 rounded-full bg-green-500 animate-pulse flex items-center justify-center">
+            <span className="w-2 h-2 rounded-full bg-white" />
+          </span>
+        )}
+        {step.status === 'thinking' && (
+          <span className="w-5 h-5 rounded-full bg-amber-400 animate-pulse flex items-center justify-center">
+            <span className="w-2 h-2 rounded-full bg-white" />
+          </span>
         )}
       </div>
 
-      {/* Steps log */}
-      {completedSteps.length > 0 && (
-        <div className="flex-1 overflow-y-auto px-4 pt-4 pb-4">
-          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">
-            Steps completed
-          </p>
-          <div className="space-y-2">
-            {completedSteps.map((step, i) => (
-              <div key={i} className="flex items-start gap-2">
-                <span className="mt-0.5 w-4 h-4 rounded-full bg-green-100 text-green-700 text-xs flex items-center justify-center shrink-0 font-bold">
-                  ✓
-                </span>
-                <div className="flex-1 min-w-0">
-                  <p className="text-slate-700 leading-snug">{step.message}</p>
-                  {step.latencyMs && (
-                    <p className="text-xs text-slate-400 mt-0.5">{step.latencyMs}ms</p>
-                  )}
-                </div>
-              </div>
-            ))}
-            {running && status === 'guiding' && (
-              <div className="flex items-start gap-2">
-                <span className="mt-0.5 w-4 h-4 rounded-full border-2 border-green-400 animate-pulse shrink-0" />
-                <p className="text-slate-500 italic">Waiting for your click…</p>
-              </div>
-            )}
-            {running && status === 'thinking' && (
-              <div className="flex items-start gap-2">
-                <span className="mt-0.5 w-4 h-4 rounded-full border-2 border-amber-400 animate-pulse shrink-0" />
-                <p className="text-slate-500 italic">Thinking…</p>
-              </div>
-            )}
-          </div>
-          <div ref={stepsEndRef} />
+      {/* Text */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-baseline gap-2">
+          <span className="text-xs font-semibold text-slate-400">Step {step.index || '?'}</span>
+          {step.action && step.status !== 'thinking' && (
+            <span className="text-xs px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 font-mono">
+              {step.action}
+            </span>
+          )}
         </div>
-      )}
+        <p className={`text-sm leading-snug mt-0.5 ${
+          step.status === 'thinking' ? 'text-amber-700 italic' :
+          step.status === 'active'   ? 'text-green-800 font-medium' :
+          'text-slate-600'
+        }`}>
+          {step.message}
+        </p>
+        {step.latencyMs && step.status === 'done' && (
+          <p className="text-xs text-slate-400 mt-0.5">{step.latencyMs}ms</p>
+        )}
+      </div>
     </div>
+  );
+}
+
+function StatusPill({ status }: { status: RunStatus }) {
+  const map: Record<RunStatus, { label: string; cls: string; pulse: boolean }> = {
+    idle:     { label: 'Ready',    cls: 'bg-slate-100 text-slate-500',  pulse: false },
+    thinking: { label: 'Thinking', cls: 'bg-amber-100 text-amber-700',  pulse: true  },
+    guiding:  { label: 'Guiding',  cls: 'bg-green-100 text-green-700',  pulse: true  },
+    done:     { label: 'Done',     cls: 'bg-green-100 text-green-700',  pulse: false },
+    error:    { label: 'Error',    cls: 'bg-red-100 text-red-600',      pulse: false },
+  };
+  const { label, cls, pulse } = map[status];
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full ${cls}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${
+        status === 'thinking' ? 'bg-amber-500' :
+        status === 'guiding'  ? 'bg-green-500' :
+        status === 'done'     ? 'bg-green-500' :
+        status === 'error'    ? 'bg-red-500' : 'bg-slate-400'
+      } ${pulse ? 'animate-pulse' : ''}`} />
+      {label}
+    </span>
   );
 }
