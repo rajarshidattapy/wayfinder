@@ -133,16 +133,17 @@ export default function Panel() {
     setRunStatus('thinking');
     setSteps([]);
     setErrorMsg('');
-    chrome.tabs.sendMessage(tab.id, { type: 'WF_START', goal });
+    // Background owns the session — it stores state and forwards to content
+    chrome.runtime.sendMessage({ type: 'WF_START', goal, tabId: tab.id });
   };
 
   const stop = async () => {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) return;
-    chrome.tabs.sendMessage(tab.id, { type: 'WF_STOP' });
+    // Background clears session and tells content to stop
+    chrome.runtime.sendMessage({ type: 'WF_STOP', tabId: tab.id });
     setRunning(false);
     setRunStatus('idle');
-    // Mark any in-progress step as abandoned
     setSteps((prev) => prev.map((s) =>
       s.status === 'thinking' || s.status === 'active' ? { ...s, status: 'done' } : s
     ));

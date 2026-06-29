@@ -35,8 +35,10 @@ model Session {
   goal        String
   status      String    @default("active")
   startUrl    String
-  stepCount   Int       @default(0)
-  durationMs  Int?
+  stepCount     Int       @default(0)
+  durationMs    Int?
+  avgConfidence Float     @default(0)
+  minConfidence Float     @default(1)
   createdAt   DateTime  @default(now())
   completedAt DateTime?
   steps       Step[]

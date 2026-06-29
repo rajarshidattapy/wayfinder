@@ -3,7 +3,8 @@ import { createHash } from 'crypto';
 import { cerebras, MODEL } from '@/lib/cerebras';
 import { SYSTEM_PROMPT } from '@/lib/prompts/system';
 import { prisma } from '@/lib/prisma';
-import { verifyApiToken } from '@/lib/auth';
+import { requireApiKey, isError } from '@/lib/middleware';
+import { checkRateLimit } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -21,17 +22,21 @@ export async function OPTIONS() {
 export async function POST(req: NextRequest) {
   const start = Date.now();
 
-  const authHeader = req.headers.get('authorization');
-  const token = authHeader?.replace('Bearer ', '').trim();
-  if (!token) {
-    return NextResponse.json({ error: 'Missing token' }, { status: 401, headers: CORS });
+  // ── Auth ──
+  const auth = await requireApiKey(req);
+  if (isError(auth)) return new NextResponse(auth.body, { status: auth.status, headers: { ...Object.fromEntries(auth.headers), ...CORS } });
+  const { user } = auth;
+
+  // ── Circuit breaker: 30 inferences / user / minute ──
+  const { allowed, remaining, resetIn } = checkRateLimit(user.id, { max: 30 });
+  if (!allowed) {
+    return NextResponse.json(
+      { error: `Rate limit exceeded. Max 30 guidance steps per minute. Resets in ${resetIn}s.` },
+      { status: 429, headers: { ...CORS, 'X-RateLimit-Reset': String(resetIn) } }
+    );
   }
 
-  const user = await verifyApiToken(token);
-  if (!user) {
-    return NextResponse.json({ error: 'Invalid token' }, { status: 401, headers: CORS });
-  }
-
+  // ── Parse body ──
   const body = await req.json();
   const { goal, sessionId, completedSteps, domSnapshot, screenshot, url } = body as {
     goal: string;
@@ -46,7 +51,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Missing fields' }, { status: 400, headers: CORS });
   }
 
-  // Upsert session
+  // ── Upsert session ──
   let session = await prisma.session.findUnique({ where: { id: sessionId } });
   if (!session) {
     session = await prisma.session.create({
@@ -54,14 +59,10 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  // ── Call Cerebras ──
   let domParsed: unknown;
-  try {
-    domParsed = JSON.parse(domSnapshot);
-  } catch {
-    domParsed = domSnapshot;
-  }
+  try { domParsed = JSON.parse(domSnapshot); } catch { domParsed = domSnapshot; }
 
-  // The Cerebras SDK types are loose — cast through any to avoid fighting them
   const completion = await (cerebras.chat.completions.create as (opts: unknown) => Promise<{
     choices: Array<{ message: { content: string | null } }>;
   }>)({
@@ -71,14 +72,8 @@ export async function POST(req: NextRequest) {
       {
         role: 'user',
         content: [
-          {
-            type: 'text',
-            text: JSON.stringify({ goal, currentUrl: url, completedSteps, domSnapshot: domParsed }),
-          },
-          {
-            type: 'image_url',
-            image_url: { url: `data:image/png;base64,${screenshot}` },
-          },
+          { type: 'text', text: JSON.stringify({ goal, currentUrl: url, completedSteps, domSnapshot: domParsed }) },
+          { type: 'image_url', image_url: { url: `data:image/png;base64,${screenshot}` } },
         ],
       },
     ],
@@ -96,35 +91,50 @@ export async function POST(req: NextRequest) {
   }
 
   const latencyMs = Date.now() - start;
+  const confidence = (parsed.confidence as number) ?? 0;
+  const isLowConfidence = confidence < 0.5;
 
-  const updateData: Record<string, unknown> = { stepCount: { increment: 1 } };
+  // ── Persist step + update session metrics ──
+  const stepIndex = completedSteps.length;
+
+  // Compute rolling avg and min confidence
+  const newStepCount = (session.stepCount ?? 0) + 1;
+  const newAvg = ((session.avgConfidence ?? 0) * (session.stepCount ?? 0) + confidence) / newStepCount;
+  const newMin = Math.min(session.minConfidence ?? 1, confidence);
+
+  const sessionUpdate: Record<string, unknown> = {
+    stepCount: { increment: 1 },
+    avgConfidence: newAvg,
+    minConfidence: newMin,
+  };
   if (parsed.done) {
-    updateData.status = 'completed';
-    updateData.completedAt = new Date();
+    sessionUpdate.status = 'completed';
+    sessionUpdate.completedAt = new Date();
+    sessionUpdate.durationMs = Date.now() - new Date(session.createdAt).getTime();
   }
 
   await Promise.all([
     prisma.step.create({
       data: {
         sessionId: session.id,
-        stepIndex: completedSteps.length,
+        stepIndex,
         url,
         selector: (parsed.selector as string) || '',
         action: (parsed.action as string) || 'unknown',
         explanation: (parsed.explanation as string) || '',
-        confidence: (parsed.confidence as number) || 0,
+        confidence,
         latencyMs,
       },
     }),
-    prisma.session.update({
-      where: { id: session.id },
-      data: updateData,
-    }),
+    prisma.session.update({ where: { id: session.id }, data: sessionUpdate }),
     prisma.apiToken.update({
-      where: { token: createHash('sha256').update(token).digest('hex') },
+      where: { token: createHash('sha256').update(req.headers.get('authorization')!.replace('Bearer ', '').trim()).digest('hex') },
       data: { lastUsed: new Date() },
     }),
   ]);
 
-  return NextResponse.json({ ...parsed, latencyMs }, { headers: CORS });
+  return NextResponse.json(
+    { ...parsed, latencyMs, remaining, isLowConfidence },
+    { headers: { ...CORS, 'X-RateLimit-Remaining': String(remaining) } }
+  );
 }
