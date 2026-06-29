@@ -10,3 +10,4 @@ dist/
 Thumbs.db
 extension/dist/
 web/.next/
+package-lock.json
