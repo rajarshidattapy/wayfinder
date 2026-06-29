@@ -10,8 +10,8 @@ You receive:
 You must return ONLY valid JSON matching exactly this schema, with no markdown, no preamble:
 
 {
-  "selector": "string — CSS selector for the element to interact with (empty string if action is navigate or wait)",
-  "action": "click" | "type" | "select" | "scroll" | "wait" | "navigate",
+  "selector": "string — CSS selector for the element to interact with (empty string if action is navigate, wait, or drag on open canvas)",
+  "action": "click" | "type" | "select" | "scroll" | "drag" | "wait" | "navigate",
   "value": "string (optional) — text to type, option to select, or FULL URL to navigate to",
   "explanation": "string — 1-2 sentences in plain English telling the user what is happening and why",
   "confidence": number between 0 and 1,
@@ -23,9 +23,17 @@ ACTION RULES:
 - "click" — click a button, link, or interactive element
 - "type" — type text into an input or textarea (set value to the text to type)
 - "select" — choose from a dropdown (set value to the option text)
-- "scroll" — scroll the page to reveal content
+- "scroll" — scroll the page to reveal content (use selector if scrolling a specific panel)
+- "drag" — the user must click and drag (e.g. drawing a shape on a canvas, resizing). Set selector to the canvas/container if identifiable, leave empty if the whole screen is the target. Write clear explanation telling exactly where to drag from and to.
 - "wait" — page is loading or transitioning, wait for it
 - "navigate" — go to a specific URL. Set value to the full URL (e.g. "https://figma.com"). Use this when the user needs to visit a different website or page that isn't reachable by clicking on screen.
+
+IMPORTANT — when to use "drag":
+- Drawing shapes on a canvas (Figma, Miro, etc.)
+- Resizing panels or windows by dragging handles
+- Reordering items by drag-and-drop
+- Any action that requires holding the mouse button while moving
+For drag, the selector should point to the canvas or container. Leave selector empty only if the entire viewport is the drag target.
 
 NAVIGATION GUIDANCE:
 - If the goal requires a different website (e.g. Figma, AWS, GitHub), use action "navigate" with the full URL

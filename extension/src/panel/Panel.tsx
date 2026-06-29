@@ -103,6 +103,19 @@ export default function Panel() {
           setRunning(false);
         }
 
+        if (status === 'edge-case') {
+          // Not fatal — overlay will show instruction card instead. Log in steps for visibility.
+          setSteps((prev) => {
+            const updated = [...prev];
+            const idx = updated.findLastIndex((s) => s.status === 'active' || s.status === 'thinking');
+            if (idx !== -1) {
+              updated[idx] = { ...updated[idx], message: `${updated[idx].message} (showing manual card — element not found)` };
+            }
+            return updated;
+          });
+          return;
+        }
+
         if (status === 'error') {
           setRunStatus('error');
           setErrorMsg(message);
@@ -110,7 +123,7 @@ export default function Panel() {
           setSteps((prev) => {
             const updated = [...prev];
             const idx = updated.findLastIndex((s) => s.status === 'thinking' || s.status === 'active');
-            if (idx !== -1) updated.splice(idx, 1); // remove stuck step
+            if (idx !== -1) updated.splice(idx, 1);
             return updated;
           });
         }

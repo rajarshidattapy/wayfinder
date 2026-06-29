@@ -1,4 +1,4 @@
-export type Action = 'click' | 'type' | 'select' | 'scroll' | 'wait' | 'navigate';
+export type Action = 'click' | 'type' | 'select' | 'scroll' | 'drag' | 'wait' | 'navigate';
 
 export interface GuideRequest {
   goal: string;
