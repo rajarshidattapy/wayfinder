@@ -1,0 +1,8 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  min-width: 320px;
+  font-family: system-ui, -apple-system, sans-serif;
+}

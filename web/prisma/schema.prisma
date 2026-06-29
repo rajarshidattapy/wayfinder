@@ -1,0 +1,76 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String     @id @default(cuid())
+  clerkId   String     @unique
+  email     String     @unique
+  createdAt DateTime   @default(now())
+  sessions  Session[]
+  playbooks Playbook[]
+  apiTokens ApiToken[]
+}
+
+model ApiToken {
+  id        String    @id @default(cuid())
+  userId    String
+  token     String    @unique
+  name      String    @default("Extension")
+  createdAt DateTime  @default(now())
+  lastUsed  DateTime?
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+}
+
+model Session {
+  id          String    @id @default(cuid())
+  userId      String
+  goal        String
+  status      String    @default("active")
+  startUrl    String
+  stepCount   Int       @default(0)
+  durationMs  Int?
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+  steps       Step[]
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model Step {
+  id          String   @id @default(cuid())
+  sessionId   String
+  stepIndex   Int
+  url         String
+  selector    String
+  action      String
+  explanation String
+  confidence  Float
+  latencyMs   Int
+  createdAt   DateTime @default(now())
+  session     Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, stepIndex])
+}
+
+model Playbook {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  goalPattern String
+  steps       Json
+  app         String
+  isPublic    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([app, isPublic])
+}

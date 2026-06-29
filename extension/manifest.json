@@ -1,0 +1,47 @@
+{
+  "manifest_version": 3,
+  "name": "Wayfinder",
+  "version": "0.1.0",
+  "description": "AI GPS for complex software. Tell it what you want — it shows you where to click.",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://wayfinder.app/*",
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "src/background.ts",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/content.ts"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "src/popup/index.html",
+    "default_icon": {
+      "16": "icons/16.png",
+      "48": "icons/48.png",
+      "128": "icons/128.png"
+    }
+  },
+  "externally_connectable": {
+    "matches": [
+      "https://wayfinder.app/*",
+      "http://localhost:3000/*"
+    ]
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["overlay.css"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
