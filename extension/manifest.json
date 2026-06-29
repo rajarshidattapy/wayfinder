@@ -7,7 +7,8 @@
     "activeTab",
     "storage",
     "scripting",
-    "tabs"
+    "tabs",
+    "sidePanel"
   ],
   "host_permissions": [
     "https://wayfinder.app/*",
@@ -32,10 +33,14 @@
       "128": "icons/128.png"
     }
   },
+  "side_panel": {
+    "default_path": "src/panel/index.html"
+  },
   "externally_connectable": {
     "matches": [
       "https://wayfinder.app/*",
-      "http://localhost:3000/*"
+      "http://localhost:3000/*",
+      "http://localhost:3001/*"
     ]
   },
   "web_accessible_resources": [
