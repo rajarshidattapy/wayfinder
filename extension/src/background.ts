@@ -35,25 +35,30 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   const session = sessions.get(tabId);
   if (!session?.active) return;
 
-  // Give content script a moment to initialise then resume
-  setTimeout(() => {
-    chrome.tabs.sendMessage(tabId, {
-      type: 'WF_RESUME',
-      goal: session.goal,
-      sessionId: session.sessionId,
-      completedSteps: session.completedSteps,
-    }).catch(() => {
-      // Content script not ready yet — retry once
-      setTimeout(() => {
-        chrome.tabs.sendMessage(tabId, {
-          type: 'WF_RESUME',
-          goal: session.goal,
-          sessionId: session.sessionId,
-          completedSteps: session.completedSteps,
-        }).catch(() => {});
-      }, 1000);
-    });
-  }, 600);
+  const resumePayload = {
+    type: 'WF_RESUME',
+    goal: session.goal,
+    sessionId: session.sessionId,
+    completedSteps: session.completedSteps,
+  };
+
+  const trySend = (delay: number, retriesLeft: number) => {
+    setTimeout(async () => {
+      try {
+        await chrome.tabs.sendMessage(tabId, resumePayload);
+      } catch {
+        if (retriesLeft > 0) {
+          trySend(800, retriesLeft - 1);
+        } else {
+          broadcastToPanel({ type: 'WF_STATUS', status: 'error', message: 'Page loaded but content script did not start. Try refreshing manually.' });
+          const s = sessions.get(tabId);
+          if (s) s.active = false;
+        }
+      }
+    }, delay);
+  };
+
+  trySend(600, 2); // up to 3 attempts: 600ms, 1400ms, 2200ms
 });
 
 // ── API call ──────────────────────────────────────────────────────────────────
@@ -94,13 +99,27 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const sessionId = crypto.randomUUID();
         sessions.set(tabId, { goal: msg.goal, sessionId, completedSteps: [], tabId, active: true });
         broadcastToPanel({ type: 'WF_STATUS', status: 'thinking', message: 'Starting…', goal: msg.goal, stepIndex: 1 });
-        // Forward to content script on that tab
-        await chrome.tabs.sendMessage(tabId, {
-          type: 'WF_RESUME',
-          goal: msg.goal,
-          sessionId,
-          completedSteps: [],
-        });
+
+        try {
+          // Try to reach the content script directly
+          await chrome.tabs.sendMessage(tabId, {
+            type: 'WF_RESUME',
+            goal: msg.goal,
+            sessionId,
+            completedSteps: [],
+          });
+        } catch {
+          // Content script not loaded — page was open before extension install/reload.
+          // Reload the tab; tabs.onUpdated will fire and send WF_RESUME automatically.
+          broadcastToPanel({
+            type: 'WF_STATUS',
+            status: 'thinking',
+            message: 'Refreshing page to activate Wayfinder…',
+            stepIndex: 1,
+          });
+          chrome.tabs.reload(tabId);
+        }
+
         sendResponse({ ok: true });
       }
 

@@ -10,7 +10,7 @@ interface Step {
   action?: string;
 }
 
-type RunStatus = 'idle' | 'thinking' | 'guiding' | 'done' | 'error';
+type RunStatus = 'idle' | 'thinking' | 'reloading' | 'guiding' | 'done' | 'error';
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:3000';
 
@@ -45,7 +45,7 @@ export default function Panel() {
 
       if (msg.type === 'WF_STATUS') {
         if (status === 'thinking') {
-          setRunStatus('thinking');
+          setRunStatus((msg.message as string | undefined)?.includes('Refreshing') ? 'reloading' : 'thinking');
           // Add a new "thinking" placeholder for this step
           setSteps((prev) => {
             // If there's already a thinking step, don't duplicate
@@ -299,20 +299,22 @@ function StepRow({ step }: { step: Step }) {
 
 function StatusPill({ status }: { status: RunStatus }) {
   const map: Record<RunStatus, { label: string; cls: string; pulse: boolean }> = {
-    idle:     { label: 'Ready',    cls: 'bg-slate-100 text-slate-500',  pulse: false },
-    thinking: { label: 'Thinking', cls: 'bg-amber-100 text-amber-700',  pulse: true  },
-    guiding:  { label: 'Guiding',  cls: 'bg-green-100 text-green-700',  pulse: true  },
-    done:     { label: 'Done',     cls: 'bg-green-100 text-green-700',  pulse: false },
-    error:    { label: 'Error',    cls: 'bg-red-100 text-red-600',      pulse: false },
+    idle:      { label: 'Ready',      cls: 'bg-slate-100 text-slate-500',  pulse: false },
+    thinking:  { label: 'Thinking',   cls: 'bg-amber-100 text-amber-700',  pulse: true  },
+    reloading: { label: 'Reloading',  cls: 'bg-blue-100 text-blue-700',    pulse: true  },
+    guiding:   { label: 'Guiding',    cls: 'bg-green-100 text-green-700',  pulse: true  },
+    done:      { label: 'Done',       cls: 'bg-green-100 text-green-700',  pulse: false },
+    error:     { label: 'Error',      cls: 'bg-red-100 text-red-600',      pulse: false },
   };
   const { label, cls, pulse } = map[status];
   return (
     <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full ${cls}`}>
       <span className={`w-1.5 h-1.5 rounded-full ${
-        status === 'thinking' ? 'bg-amber-500' :
-        status === 'guiding'  ? 'bg-green-500' :
-        status === 'done'     ? 'bg-green-500' :
-        status === 'error'    ? 'bg-red-500' : 'bg-slate-400'
+        status === 'thinking'  ? 'bg-amber-500' :
+        status === 'reloading' ? 'bg-blue-500'  :
+        status === 'guiding'   ? 'bg-green-500' :
+        status === 'done'      ? 'bg-green-500' :
+        status === 'error'     ? 'bg-red-500'   : 'bg-slate-400'
       } ${pulse ? 'animate-pulse' : ''}`} />
       {label}
     </span>
