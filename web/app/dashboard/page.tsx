@@ -1,7 +1,10 @@
 import { auth } from '@clerk/nextjs/server';
 import { redirect } from 'next/navigation';
+import type { Session } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import Link from 'next/link';
+
+type SessionWithCount = Session & { _count: { steps: number } };
 
 function statusBadge(status: string) {
   const map: Record<string, string> = {
@@ -28,7 +31,8 @@ export default async function DashboardPage() {
     },
   });
 
-  const completedCount = user?.sessions.filter((s) => s.status === 'completed').length ?? 0;
+  const sessions = (user?.sessions ?? []) as SessionWithCount[];
+  const completedCount = sessions.filter((s) => s.status === 'completed').length;
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -51,7 +55,7 @@ export default async function DashboardPage() {
           {[
             { label: 'Total sessions', value: user?._count.sessions ?? 0 },
             { label: 'Completed goals', value: completedCount },
-            { label: 'Steps taken', value: user?.sessions.reduce((a, s) => a + s.stepCount, 0) ?? 0 },
+            { label: 'Steps taken', value: sessions.reduce((a: number, s: SessionWithCount) => a + s.stepCount, 0) },
           ].map(({ label, value }) => (
             <div key={label} className="bg-white rounded-xl border border-slate-200 p-6">
               <p className="text-3xl font-bold text-slate-900">{value}</p>
@@ -62,7 +66,7 @@ export default async function DashboardPage() {
 
         {/* Sessions */}
         <h2 className="text-lg font-semibold text-slate-900 mb-4">Recent sessions</h2>
-        {!user || user.sessions.length === 0 ? (
+        {!user || sessions.length === 0 ? (
           <div className="bg-white rounded-xl border border-slate-200 p-12 text-center">
             <p className="text-4xl mb-3">🧭</p>
             <p className="font-semibold text-slate-700">No sessions yet</p>
@@ -78,7 +82,7 @@ export default async function DashboardPage() {
           </div>
         ) : (
           <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-100">
-            {user.sessions.map((session) => (
+            {sessions.map((session: SessionWithCount) => (
               <div key={session.id} className="flex items-center justify-between px-6 py-4">
                 <div className="flex-1 min-w-0">
                   <p className="font-medium text-slate-800 truncate">{session.goal}</p>

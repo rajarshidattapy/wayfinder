@@ -54,7 +54,6 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // Call Cerebras
   let domParsed: unknown;
   try {
     domParsed = JSON.parse(domSnapshot);
@@ -62,7 +61,10 @@ export async function POST(req: NextRequest) {
     domParsed = domSnapshot;
   }
 
-  const completion = await cerebras.chat.completions.create({
+  // The Cerebras SDK types are loose — cast through any to avoid fighting them
+  const completion = await (cerebras.chat.completions.create as (opts: unknown) => Promise<{
+    choices: Array<{ message: { content: string | null } }>;
+  }>)({
     model: MODEL,
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
@@ -80,7 +82,6 @@ export async function POST(req: NextRequest) {
         ],
       },
     ],
-    // @ts-expect-error — SDK type may not expose response_format yet
     response_format: { type: 'json_object' },
     max_tokens: 500,
     temperature: 0.2,
@@ -96,7 +97,12 @@ export async function POST(req: NextRequest) {
 
   const latencyMs = Date.now() - start;
 
-  // Log step and update session
+  const updateData: Record<string, unknown> = { stepCount: { increment: 1 } };
+  if (parsed.done) {
+    updateData.status = 'completed';
+    updateData.completedAt = new Date();
+  }
+
   await Promise.all([
     prisma.step.create({
       data: {
@@ -112,10 +118,7 @@ export async function POST(req: NextRequest) {
     }),
     prisma.session.update({
       where: { id: session.id },
-      data: {
-        stepCount: { increment: 1 },
-        ...(parsed.done && { status: 'completed', completedAt: new Date() }),
-      },
+      data: updateData,
     }),
     prisma.apiToken.update({
       where: { token: createHash('sha256').update(token).digest('hex') },

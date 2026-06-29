@@ -28,8 +28,8 @@ export default function ExtensionAuth() {
           return;
         }
 
-        // @ts-expect-error — chrome injected by extension
-        const chrome = (window as any).chrome;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const chrome = (window as unknown as { chrome?: any }).chrome;
         if (!chrome?.runtime?.sendMessage) {
           setErrorMsg('Extension not detected. Please install Wayfinder first.');
           setStatus('error');

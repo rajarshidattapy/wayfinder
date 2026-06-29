@@ -1,5 +1,6 @@
 import { auth } from '@clerk/nextjs/server';
 import { redirect } from 'next/navigation';
+import type { Playbook } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import Link from 'next/link';
 
@@ -56,7 +57,7 @@ export default async function PlaybooksPage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {playbooks.map((pb) => (
+            {playbooks.map((pb: Playbook) => (
               <div key={pb.id} className="bg-white rounded-xl border border-slate-200 p-6">
                 <div className="flex items-start justify-between">
                   <div>
